@@ -6,6 +6,7 @@ from pathlib import Path
 
 import ezdxf
 from ezdxf import bbox
+from ezdxf import units as dxf_units
 
 PEN_SUFFIX = re.compile(r"_Ном\._пера__\d+$")
 
@@ -15,19 +16,37 @@ def base_layer(name):
     return PEN_SUFFIX.sub("", name)
 
 
+def is_closed(e):
+    """Замкнут ли контур: у новых и у старых полилиний это проверяется по-разному."""
+    if e.dxftype() == "LWPOLYLINE":
+        return e.closed
+    if e.dxftype() == "POLYLINE":
+        return e.is_closed
+    return False
+
+
+def entity_texts(e):
+    """Тексты объекта: обычный текст или атрибуты блока."""
+    if e.dxftype() in ("TEXT", "MTEXT"):
+        return [e.plain_text()]
+    if e.dxftype() == "INSERT":
+        return [a.dxf.text for a in e.attribs]
+    return []
+
+
 def layer_texts(items, limit=5):
-    """Первые несколько текстов на слое."""
     texts = []
     for e in items:
-        if e.dxftype() in ("TEXT", "MTEXT"):
-            texts.append(e.plain_text())
-            if len(texts) == limit:
-                break
-    return texts
+        for text in entity_texts(e):
+            if text.strip():
+                texts.append(text)
+        if len(texts) >= limit:
+            break
+    return texts[:limit]
 
 
 def layer_box(items):
-    """Где лежит слой и какого он размера: ([min_x, min_y], [ширина, высота])."""
+    """Где лежит слой и какого он размера."""
     try:
         box = bbox.extents(items, fast=True)
     except Exception:
@@ -47,21 +66,24 @@ def summarize(path):
     for e in msp:
         entities[e.dxf.layer].append(e)
 
-    result = {}
+    layers = {}
     for name, items in entities.items():
-        types = Counter(e.dxftype() for e in items)
-        closed = sum(1 for e in items if e.dxftype() == "LWPOLYLINE" and e.closed)
         min_xy, size_xy = layer_box(items)
-        result[name] = {
+        layers[name] = {
             "base": base_layer(name),
             "count": len(items),
-            "types": dict(types),
-            "closed_polylines": closed,
+            "types": dict(Counter(e.dxftype() for e in items)),
+            "closed": sum(1 for e in items if is_closed(e)),
             "texts": layer_texts(items),
             "min_xy": min_xy,
             "size_xy": size_xy,
         }
-    return result
+
+    return {
+        "file": path.name,
+        "units": dxf_units.unit_name(doc.units),
+        "layers": layers,
+    }
 
 
 if __name__ == "__main__":
@@ -70,4 +92,4 @@ if __name__ == "__main__":
         summary = summarize(path)
         out = path.with_suffix(".summary.json")
         out.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"{path.name}: {len(summary)} слоёв -> {out.name}")
+        print(f"{path.name}: {len(summary['layers'])} слоёв, единицы: {summary['units']}")
