@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.vscode/
+
+# данные проектов — не загружаем
+data/
+*.dwg
+*.dxf
+*.fbx
+*.zip
