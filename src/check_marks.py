@@ -14,6 +14,7 @@ MARGIN_Y = 3000
 
 
 def mark_value(text):
+    text = text.replace("%%p", "±").replace("%%P", "±")
     m = MARK.search(text)
     if not m:
         return None
@@ -22,30 +23,49 @@ def mark_value(text):
 
 
 def all_marks(msp):
-    """Все отметки на листе: (значение, x, y, откуда взята)."""
+    """Все отметки на листе: (значение, x, y, откуда взята, слой)."""
     marks = []
     for e in msp.query("TEXT MTEXT"):
         v = mark_value(e.plain_text())
         if v is not None:
             p = e.dxf.insert
-            marks.append((v, p.x, p.y, "текст"))
+            marks.append((v, p.x, p.y, "текст", e.dxf.layer))
     for e in msp.query("INSERT"):
+        p = e.dxf.insert   # у блока точка вставки обычно на самом уровне
+        found = False
         for a in e.attribs:
             v = mark_value(a.dxf.text)
             if v is not None:
-                p = e.dxf.insert   # у блока точка вставки обычно на самом уровне
-                marks.append((v, p.x, p.y, "блок"))
+                marks.append((v, p.x, p.y, "атрибут блока", e.dxf.layer))
+                found = True
+        if found:
+            continue
+        try:
+            inner = list(e.virtual_entities())
+        except Exception:
+            continue
+        for ve in inner:
+            if ve.dxftype() in ("TEXT", "MTEXT"):
+                v = mark_value(ve.plain_text())
+                if v is not None:
+                    marks.append((v, p.x, p.y, "текст в блоке", e.dxf.layer))
+                    break
     return marks
+
+
+def distance(x, y, fb):
+    """Насколько точка за пределами рамки фасада по x и по y (0 — внутри)."""
+    dx = max(fb[0] - x, 0, x - fb[2])
+    dy = max(fb[1] - y, 0, y - fb[3])
+    return dx, dy
 
 
 def nearest_facade(x, y, boxes):
     """К какому фасаду относится отметка: ближайший по горизонтали."""
     best = None
     for name, fb in boxes.items():
-        if not fb[1] - MARGIN_Y <= y <= fb[3] + MARGIN_Y:
-            continue
-        dx = max(fb[0] - x, 0, x - fb[2])
-        if dx <= MARGIN_X and (best is None or dx < best[0]):
+        dx, dy = distance(x, y, fb)
+        if dx <= MARGIN_X and dy <= MARGIN_Y and (best is None or dx < best[0]):
             best = (dx, name)
     return best[1] if best else None
 
@@ -59,8 +79,21 @@ if __name__ == "__main__":
     z_eave = building["parts"][0]["z_eave"]
 
     boxes = {name: checked[name]["bbox"] for name in FACADE_SIDE}
+    marks = all_marks(msp)
+
+    print(f"Всего отметок на листе: {len(marks)}")
+    print("Рамки фасадов, мм:")
+    for name, fb in boxes.items():
+        print(f"  {name}: x {fb[0]:.0f}…{fb[2]:.0f}  y {fb[1]:.0f}…{fb[3]:.0f}")
+    print("Отметки (значение, где лежит, ближайший фасад и расстояние до него, м):")
+    for v, x, y, src, layer in sorted(marks, key=lambda m: (m[1], m[2])):
+        name, (dx, dy) = min(((n, distance(x, y, fb)) for n, fb in boxes.items()),
+                             key=lambda t: t[1][0] + t[1][1])
+        print(f"  {v:+7.3f}  x {x:9.0f}  y {y:9.0f}  {src:14} {layer:20} "
+              f"-> {name}: dx {dx / 1000:6.1f}  dy {dy / 1000:6.1f}")
+
     groups = {name: [] for name in FACADE_SIDE}
-    for v, x, y, src in all_marks(msp):
+    for v, x, y, src, layer in marks:
         name = nearest_facade(x, y, boxes)
         if name:
             groups[name].append((v, y, src))

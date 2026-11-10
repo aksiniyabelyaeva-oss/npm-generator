@@ -46,7 +46,12 @@ def wall_frame(outline):
 
 
 def roof_band(msp, fb):
-    """Тёмная заливка кровли в верхней части фасада: (лево, право, низ = карниз)."""
+    """Кровля основного объёма на фасаде: (лево, право, низ = карниз).
+
+    Карниз — низ самого нижнего широкого куска кровли.
+    Края — по всем кускам на уровне карниза и выше, в том числе узким
+    торцам ската. Кровли пристроек ниже карниза, поэтому они не попадают.
+    """
     height = fb[3] - fb[1]
     pieces = []
     for e in msp.query("HATCH"):
@@ -57,12 +62,14 @@ def roof_band(msp, fb):
             continue
         x0, y0, x1, y1 = b.extmin.x, b.extmin.y, b.extmax.x, b.extmax.y
         inside = fb[0] - 1 <= x0 and x1 <= fb[2] + 1 and fb[1] - 1 <= y0 and y1 <= fb[3] + 1
-        if inside and y1 >= fb[1] + 0.7 * height and x1 - x0 >= 2000:
+        if inside and y1 >= fb[1] + 0.7 * height:
             pieces.append((x0, y0, x1, y1))
-    if not pieces:
+    wide = [p for p in pieces if p[2] - p[0] >= 2000]
+    if not wide:
         return None
-    return min(p[0] for p in pieces), max(p[2] for p in pieces), min(p[1] for p in pieces)
-
+    eave_y = min(p[1] for p in wide)
+    main = [p for p in pieces if p[1] >= eave_y - 200]
+    return min(p[0] for p in main), max(p[2] for p in main), eave_y
 
 def point(axis, along, across):
     p = [0.0, 0.0]
