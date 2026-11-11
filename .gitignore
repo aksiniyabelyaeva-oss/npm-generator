@@ -10,3 +10,7 @@ data/
 *.dxf
 *.fbx
 *.zip
+# результаты запусков
+/*.png
+*.blend
+*.blend1

@@ -1,0 +1,27 @@
+{
+  "name": "project_01",
+  "data_dir": "data/project_01",
+  "topo": {"file": "dxf/output[1]_3_3000-24tp.dxf", "layer": "Здания"},
+  "facades": {"file": "dxf/фасады, разрезы 2 (1).dxf"},
+  "windows_for_model": "checked",
+  "manual": {
+    "zero_abs": 137.70,
+    "main": {
+      "z_bottom": -0.69,
+      "z_eave": 6.83,
+      "roof": {"type": "mansard_hip", "z_break": 8.20, "z_ridge": 10.70},
+      "colors": {
+        "wall_floor1": "#A38F7A",
+        "wall_floor2": "#D1AB6E",
+        "trim": "#F2EDE0",
+        "roof": "#454A4F",
+        "plinth": "#454A4F"
+      }
+    },
+    "review": [
+      "zero_abs 137.70 — оценка по топосъёмке (макс. отметка земли у стен 137.57 + 0.14), уточнить по буклету АГР",
+      "z_eave 6.83 и z_break — по отметкам разрезов; z_ridge 10.70 — оценка по фасадам",
+      "цвета взяты из заливок PDF, кодов RAL нет"
+    ]
+  }
+}

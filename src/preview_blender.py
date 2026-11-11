@@ -1,9 +1,13 @@
 import json
 import math
+import sys
+from pathlib import Path
 
+import bpy  # bpy первым: после него становится доступен bmesh
 import bmesh
-import bpy
 
+# Путь для запуска из интерфейса Blender. При запуске из консоли
+# (run_project.py) путь передаётся после «--» и этот не используется.
 JSON_PATH = r"C:\Users\user\Desktop\npm-generator\data\project_01\building.json"
 FLOOR2_Z = 3.42        # высота пола 2-го этажа: здесь меняется цвет стены
 ROOF_LOWER_RUN = 0.8   # насколько нижний крутой скат мансарды уходит внутрь, м
@@ -157,4 +161,48 @@ def build(path):
     print(f"Предпросмотр построен, проёмов: {len(data.get('openings', []))}")
 
 
-build(JSON_PATH)
+
+def json_path():
+    """Путь к building.json: после «--» в командной строке или JSON_PATH."""
+    if "--" in sys.argv and len(sys.argv) > sys.argv.index("--") + 1:
+        return sys.argv[sys.argv.index("--") + 1]
+    return JSON_PATH
+
+
+def look_at_model(data):
+    """Переносит 3D-вид к модели и увеличивает дальность видимости."""
+    if PLACE_IN_MSK:
+        ox, oy = data["origin_msk"]
+        target = (ox, oy, data.get("zero_abs", 0.0) + 4.0)
+    else:
+        target = (0.0, 0.0, 4.0)
+    areas = [a for screen in bpy.data.screens for a in screen.areas if a.type == "VIEW_3D"]
+    for area in areas:
+        space = area.spaces.active
+        space.clip_start = 0.1
+        space.clip_end = 100000.0
+        space.region_3d.view_location = target
+        space.region_3d.view_distance = 60.0
+        area.tag_redraw()
+
+
+def save_blend(path):
+    """Без интерфейса: добавляет сданную модель и сохраняет preview.blend рядом с данными."""
+    data_dir = Path(path).parent
+    for ob in [o for o in bpy.data.objects if o.type == "MESH" and o.name == "Cube"]:
+        bpy.data.objects.remove(ob, do_unlink=True)   # кубик из стартовой сцены
+    fbx = sorted((data_dir / "reference").glob("*.fbx"))
+    if fbx:
+        bpy.ops.import_scene.fbx(filepath=str(fbx[0]))
+        print(f"Эталон добавлен: {fbx[0].name}")
+    out = data_dir / "preview.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(out))
+    print(f"Сохранено: {out}")
+
+
+path = json_path()
+build(path)
+with open(path, encoding="utf-8") as f:
+    look_at_model(json.load(f))
+if bpy.app.background:
+    save_blend(path)

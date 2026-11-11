@@ -23,6 +23,7 @@ SIDES = {
 }
 ROOF_LOWER_RUN = 0.8   # как в preview_blender.py
 RAY = 40.0             # длина луча, м
+ZERO_TOL = 300         # расхождение нулей в ряду больше 30 см — явная ошибка, мм
 
 
 def wall_plane(outline, axis, sign):
@@ -71,6 +72,34 @@ def roof_band(msp, fb):
     main = [p for p in pieces if p[1] >= eave_y - 200]
     return min(p[0] for p in main), max(p[2] for p in main), eave_y
 
+
+def same_row(a, b):
+    """Фасады стоят в одном ряду листа, если их рамки сильно перекрываются по высоте."""
+    overlap = min(a[3], b[3]) - max(a[1], b[1])
+    return overlap > 0.5 * min(a[3] - a[1], b[3] - b[1])
+
+
+def choose_zeros(boxes, roofs, z_eave, z_ridge):
+    """Ноль каждого фасада с проверкой по соседям в ряду.
+
+    Свой ноль — от низа кровли. Если сосед в ряду даёт другой ноль,
+    берём того, у кого конёк ближе к коньку по разрезу.
+    """
+    own = {n: roofs[n][2] - z_eave * 1000 for n in roofs}
+    error = {n: abs((boxes[n][3] - own[n]) / 1000 - z_ridge) for n in own}
+    zeros = {}
+    for n in own:
+        peers = [m for m in own if same_row(boxes[n], boxes[m])]
+        best = min(peers, key=lambda m: error[m])
+        if abs(own[n] - own[best]) > ZERO_TOL:
+            zeros[n] = own[best]
+            print(f"  {n}: ноль взят с {best} (свой отличался на "
+                  f"{(own[n] - own[best]) / 1000:+.2f} м, конёк {error[n]:.2f} м от разреза)")
+        else:
+            zeros[n] = own[n]
+    return zeros
+
+
 def point(axis, along, across):
     p = [0.0, 0.0]
     p[axis], p[1 - axis] = along, across
@@ -97,25 +126,39 @@ def find_face(parts, d, plane, u, zc):
 
 if __name__ == "__main__":
     dxf_path = Path(sys.argv[1])
+    windows_name = sys.argv[2] if len(sys.argv) > 2 else "checked"
     data_dir = dxf_path.parent.parent
     building = json.loads((data_dir / "building.json").read_text(encoding="utf-8"))
-    checked = json.loads((data_dir / "windows_checked.json").read_text(encoding="utf-8"))
+    windows_path = data_dir / f"windows_{windows_name}.json"
+    checked = json.loads(windows_path.read_text(encoding="utf-8"))
     msp = ezdxf.readfile(dxf_path).modelspace()
+    print(f"Окна берутся из {windows_path.name}")
 
     parts = building["parts"]
     main = parts[0]
     planes, center, length = wall_frame(main["outline"])
     z_eave, z_break = main["z_eave"], main["roof"]["z_break"]
+    z_ridge = main["roof"]["z_ridge"]
+
+    boxes = {name: checked[name]["bbox"] for name in FACADE_SIDE}
+    roofs = {}
+    for name in FACADE_SIDE:
+        roof = roof_band(msp, boxes[name])
+        if roof is None:
+            print(f"{name}: кровля не найдена, фасад пропущен")
+        else:
+            roofs[name] = roof
+    print("Проверка нулей по рядам:")
+    zeros = choose_zeros(boxes, roofs, z_eave, z_ridge)
+    print()
 
     openings, unplaced = [], 0
     for name, side in FACADE_SIDE.items():
-        fb, d = checked[name]["bbox"], SIDES[side]
-        roof = roof_band(msp, fb)
-        if roof is None:
-            print(f"{name}: кровля не найдена, фасад пропущен")
+        if name not in roofs:
             continue
-        rx0, rx1, eave_y = roof
-        zero_y = eave_y - z_eave * 1000
+        fb, d = boxes[name], SIDES[side]
+        rx0, rx1, _ = roofs[name]
+        zero_y = zeros[name]
         cx = (rx0 + rx1) / 2
 
         def rel(y):
@@ -124,7 +167,7 @@ if __name__ == "__main__":
         doors = [rel(it["z0"]) for it in checked[name]["items"] if it["type"] == "door"]
         print(f"{name} -> {side}: кровля {(rx1 - rx0) / 1000:.2f} м при стене "
               f"{length[d['axis']]:.2f} м, конёк {rel(fb[3]):+.2f} "
-              f"(в building.json {main['roof']['z_ridge']:+.2f}), низ дверей: "
+              f"(в building.json {z_ridge:+.2f}), низ дверей: "
               f"{', '.join(f'{z:+.2f}' for z in doors) or 'нет'}")
 
         for it in checked[name]["items"]:
@@ -139,6 +182,8 @@ if __name__ == "__main__":
                 hit = find_face(parts, d, planes[side], (u0 + u1) / 2, (z0 + z1) / 2)
                 if hit is None:
                     unplaced += 1
+                    print(f"  не размещено: {name} №{it['id']} {it['type']} "
+                          f"z {z0:+.2f}…{z1:+.2f}")
                     continue
                 _, part_id, face = hit
             openings.append({
@@ -152,7 +197,7 @@ if __name__ == "__main__":
     building["review"] = [r for r in building["review"] if not r.startswith("проёмы:")]
     building["review"].append(
         f"проёмы: размещено {len(openings)}, не размещено {unplaced}; развёртка (facade_3) "
-        f"не использована; высоты привязаны к карнизу +{z_eave} по низу кровли на фасадах")
+        f"не использована; высоты от низа кровли (+{z_eave}), ноль сверен по фасадам ряда")
     (data_dir / "building.json").write_text(
         json.dumps(building, ensure_ascii=False, indent=2), encoding="utf-8")
 

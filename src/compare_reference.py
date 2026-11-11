@@ -1,5 +1,6 @@
 import json
 import math
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -25,12 +26,32 @@ def wall_plane(outline, axis, sign):
     return max(lengths, key=lengths.get)
 
 
-def reference_object():
-    """Импортированная сданная модель: самый большой меш вне коллекции Preview."""
-    preview = bpy.data.collections.get("Preview")
-    skip = set(preview.objects) if preview else set()
-    meshes = [o for o in bpy.data.objects if o.type == "MESH" and o not in skip]
-    return max(meshes, key=lambda o: len(o.data.vertices)) if meshes else None
+def reference_object(data_dir):
+    """Сданная модель: самый большой меш вне коллекции Preview.
+
+    Если её нет в сцене (например, при запуске из консоли), импортирует
+    FBX из папки reference. Меньше 100 вершин — это не модель, а кубик и т.п.
+    """
+    def find():
+        preview = bpy.data.collections.get("Preview")
+        skip = set(preview.objects) if preview else set()
+        meshes = [o for o in bpy.data.objects
+                  if o.type == "MESH" and o not in skip and len(o.data.vertices) >= 100]
+        return max(meshes, key=lambda o: len(o.data.vertices)) if meshes else None
+
+    ref = find()
+    fbx = sorted((data_dir / "reference").glob("*.fbx"))
+    if ref is None and fbx:
+        bpy.ops.import_scene.fbx(filepath=str(fbx[0]))
+        ref = find()
+    return ref
+
+
+def json_path():
+    """Путь к building.json: после «--» в командной строке или JSON_PATH."""
+    if "--" in sys.argv and len(sys.argv) > sys.argv.index("--") + 1:
+        return sys.argv[sys.argv.index("--") + 1]
+    return JSON_PATH
 
 
 def local_points(obj, data):
@@ -88,13 +109,14 @@ def level_peaks(values, top=14):
 
 
 def main():
-    data = json.loads(Path(JSON_PATH).read_text(encoding="utf-8"))
+    path = Path(json_path())
+    data = json.loads(path.read_text(encoding="utf-8"))
     main_part = data["parts"][0]
     outline = main_part["outline"]
-    ref = reference_object()
+    ref = reference_object(path.parent)
     lines = []
     if ref is None:
-        lines.append("Сданная модель не найдена: импортируй FBX (Файл → Импорт → FBX)")
+        lines.append("Сданная модель не найдена: нет FBX в папке reference")
     else:
         all_pts = local_points(ref, data)
         z_max = main_part["z_eave"] - 0.3
@@ -160,7 +182,7 @@ def main():
 
     text = "\n".join(lines)
     print(text)
-    out_path = Path(JSON_PATH).parent / "compare_reference.txt"
+    out_path = path.parent / "compare_reference.txt"
     out_path.write_text(text, encoding="utf-8")
     block = bpy.data.texts.get("compare_result") or bpy.data.texts.new("compare_result")
     block.clear()

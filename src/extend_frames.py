@@ -87,6 +87,8 @@ if __name__ == "__main__":
     data_dir = dxf_path.parent.parent
     windows = json.loads((data_dir / f"windows_{name}.json").read_text(encoding="utf-8"))
     msp = ezdxf.readfile(dxf_path).modelspace()
+    plots = data_dir / "plots"   # картинки — рядом с данными проекта
+    plots.mkdir(exist_ok=True)
 
     result = {}
     for facade, block in windows.items():
@@ -114,8 +116,8 @@ if __name__ == "__main__":
               f"в среднем на {avg:.0f} мм")
         draw(lines, block["items"], new_items,
              f"{facade}: синий пунктир — было, красное — по раме",
-             data_dir / f"framed_{facade}.png")
+             plots / f"framed_{name}_{facade}.png")
 
     out = data_dir / f"windows_{name}_framed.json"
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Сохранено: {out}, картинки framed_facade_N.png")
+    print(f"Сохранено: {out}, картинки plots/framed_{name}_facade_N.png")

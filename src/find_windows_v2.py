@@ -161,7 +161,7 @@ def inside(seg, fb):
     return all(fb[0] <= p[0] <= fb[2] and fb[1] <= p[1] <= fb[3] for p in seg)
 
 
-def draw(n, fb, fsegs, items):
+def draw(n, fb, fsegs, items, plots):
     fig, ax = plt.subplots(figsize=(14, 7))
     for (a, b) in fsegs:
         ax.plot([a[0], b[0]], [a[1], b[1]], color="lightgray", linewidth=0.4)
@@ -175,7 +175,7 @@ def draw(n, fb, fsegs, items):
     ax.set_ylim(fb[1], fb[3])
     ax.set_aspect("equal")
     ax.set_title(f"Фасад {n}: синий — окно, зелёный — дверь, оранжевый — слуховое окно")
-    plt.savefig(f"windows_v2_{n}.png", dpi=120)
+    plt.savefig(plots / f"windows_v2_{n}.png", dpi=120)
     plt.close(fig)
 
 
@@ -183,6 +183,8 @@ if __name__ == "__main__":
     path = Path(sys.argv[1])
     msp = ezdxf.readfile(path).modelspace()
 
+    plots = path.parent.parent / "plots"   # картинки — рядом с данными проекта
+    plots.mkdir(exist_ok=True)
     boxes = pane_boxes(msp, FACADE_LAYER)
     size = median(max(b[2] - b[0], b[3] - b[1]) for b in boxes)
     facades = cluster(boxes, gap=2 * size)
@@ -219,7 +221,7 @@ if __name__ == "__main__":
         counts = {t: sum(1 for it in items if it["type"] == t) for t in COLORS}
         print(f"Фасад {n}: окон {counts['window']:2}   дверей {counts['door']}   "
               f"слуховых {counts['dormer']}")
-        draw(n, fb, fsegs, items)
+        draw(n, fb, fsegs, items, plots)
 
     out = path.parent.parent / "windows_raw.json"
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
