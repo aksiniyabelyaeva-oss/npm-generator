@@ -28,11 +28,13 @@ DEFAULT_BLENDER = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blende
 STEPS = {
     "contour": "контур здания с топоплана",
     "manual": "ручные значения: высоты, кровля, цвета",
+    "ground": "отметки земли с топоплана: низ здания по рельефу",
     "annexes": "пристройки и крыльцо",
     "windows": "поиск окон на фасадах",
     "frames": "окна до внешней рамы",
     "evaluate": "сравнение окон с эталоном разметки",
     "openings": "проёмы на стенах модели",
+    "details": "детали фасада с чертежа: тяги, лопатки, наличники",
     "preview": "предпросмотр в Blender -> preview.blend",
     "compare": "сравнение модели со сданной НПМ",
     "library": "материалы из сданной НПМ в частную библиотеку",
@@ -105,6 +107,8 @@ def do_step(step, cfg, blender):
         python("extract_contour.py", topo, cfg["topo"]["layer"])
     elif step == "manual":
         apply_manual(cfg)
+    elif step == "ground":
+        python("extract_ground.py", topo, cfg["topo"].get("ground_layer", "Горизонтали"))
     elif step == "annexes":
         python("extract_annexes.py", topo, cfg["topo"]["layer"])
     elif step == "windows":
@@ -118,6 +122,8 @@ def do_step(step, cfg, blender):
             print("Эталона разметки нет (windows_checked.json) — шаг пропущен")
     elif step == "openings":
         python("place_openings.py", facades, cfg.get("windows_for_model", "checked"))
+    elif step == "details":
+        python("extract_details.py", facades)
     elif step == "preview":
         run(blender("preview_blender.py", building))
     elif step == "compare":

@@ -32,8 +32,8 @@ import library  # noqa: E402
 
 FLOOR2_Z = 3.42        # смена цвета стены между этажами, м
 ROOF_LOWER_RUN = 0.8   # вынос нижнего ската мансарды внутрь, м
-REVEAL = 0.15          # глубина откоса окна, м
-BURY = 1.0             # насколько стены уходят ниже z_bottom, м
+REVEAL = 0.08          # глубина откоса окна (рама почти в плоскости стены), м
+BURY = 2.0             # насколько стены уходят ниже самой низкой земли, м
 DORMER_SIDE = 0.10     # стенка слухового окна вокруг рамы, м
 DORMER_RISE = 0.35     # высота конька слухового окна над его стенами, м
 # детали фасада (пока одинаковые для всех домов; дальше — из чертежей)
@@ -47,6 +47,7 @@ BELT_OUT = 0.05        # вынос пояса, м
 CORNICE_H = 0.35       # высота карниза под кровлей, м
 CORNICE_OUT = 0.12     # вынос карниза, м
 OVERHANG = 0.30        # свес кровли, м
+FASCIA = 0.25          # высота тёмной лобовой доски (водосточного жёлоба) по краю свеса, м
 PILASTER_W = 0.35      # ширина угловой лопатки, м
 PILASTER_OUT = 0.04    # вынос лопатки, м
 ANNEX_PITCH = 28       # уклон вальмовой крыши пристройки, градусы
@@ -66,7 +67,7 @@ ROLE_DEFAULTS = {
     "plinth": ("plaster", "plinth"),
     "roof": ("roof_standing_seam", "roof"),
     "annex": ("wood_siding_horizontal", "#A08F78"),
-    "glass": ("glass_dark", None),
+    "glass": ("glass_dark", "#B9C0C3"),
     "door": ("paint", "#4A3A30"),
     "dormer": ("paint", "roof"),
 }
@@ -176,8 +177,9 @@ def wall(faces, p, q, z0, z1, holes, kind):
         return add(add(base, mul(d, t)), (0.0, 0.0, z))
 
     # проём не может выходить за стену: обрезаем по длине и высоте
-    holes = [(max(t0, 0.02), min(t1, length - 0.02), max(h0, z0 + 0.02), min(h1, z1 - 0.02), k)
-             for t0, t1, h0, h1, k in holes]
+    holes = [(max(t0, 0.02), min(t1, length - 0.02), max(h0, z0 + 0.02), min(h1, z1 - 0.02), k,
+              rest[0] if rest else None)
+             for t0, t1, h0, h1, k, *rest in holes]
     holes = [h for h in holes if h[1] - h[0] > 0.05 and h[3] - h[2] > 0.05]
 
     xs = sorted({0.0, length, *[min(max(h[i], 0.0), length) for h in holes for i in (0, 1)]})
@@ -206,60 +208,94 @@ def wall(faces, p, q, z0, z1, holes, kind):
             faces.rect(at(run[0], za), mul(d, run[1] - run[0]), (0, 0, zb - za),
                        wall_tile(zm, kind), out)
 
-    for t0, t1, h0, h1, kind_hole in holes:
-        opening(faces, at(t0, h0), d, out, t1 - t0, h1 - h0, kind_hole,
-                surround=SURROUND_W if kind != "dormer" else 0.06)
+    for t0, t1, h0, h1, kind_hole, sbox in holes:
+        margins = None
+        if sbox:                                   # наличник с чертежа: поля вокруг проёма
+            margins = (t0 - sbox[0], sbox[1] - t1, h0 - sbox[2], sbox[3] - h1)
+        elif not DRAWING_DETAILS and kind != "dormer":
+            margins = (SURROUND_W, SURROUND_W, 0.0, SURROUND_W)
+        opening(faces, at(t0, h0), d, out, t1 - t0, h1 - h0, kind_hole, margins,
+                dark=kind == "dormer")
     return holes
 
 
-def opening(faces, corner, d, out, w, h, kind, surround=SURROUND_W):
-    """Проём: откосы, стекло (или полотно двери) в глубине, рама с переплётом,
-    наличник вокруг и отлив под окном."""
+def opening(faces, corner, d, out, w, h, kind, margins=None, dark=False):
+    """Проём: откосы, стекло (или полотно двери), рама с переплётом,
+    наличник вокруг (margins: слева, справа, снизу, сверху) и тёмный отлив.
+
+    dark — для слуховых окон: рама и стекло тёмные, как у сданных НПМ.
+    """
+    frame_role = "dormer" if dark else "trim"
+    glass_role = "dormer" if dark else ("door" if kind == "door" else "glass")
     inward = mul(out, -REVEAL)
     up = (0.0, 0.0, h)
     along = mul(d, w)
-    faces.rect(corner, along, inward, "trim", (0, 0, 1))                      # низ откоса
-    faces.rect(add(corner, up), along, inward, "trim", (0, 0, -1))           # верх откоса
-    faces.rect(corner, up, inward, "trim", d)                                 # левый откос
-    faces.rect(add(corner, along), up, inward, "trim", mul(d, -1))           # правый откос
-    faces.rect(add(corner, inward), along, up, "door" if kind == "door" else "glass", out)
+    faces.rect(corner, along, inward, frame_role, (0, 0, 1))                  # низ откоса
+    faces.rect(add(corner, up), along, inward, frame_role, (0, 0, -1))       # верх откоса
+    faces.rect(corner, up, inward, frame_role, d)                             # левый откос
+    faces.rect(add(corner, along), up, inward, frame_role, mul(d, -1))       # правый откос
+    faces.rect(add(corner, inward), along, up, glass_role, out)
 
-    # рама и переплёт — чуть впереди стекла
-    fc = add(corner, mul(out, -(REVEAL - 0.04)))
+    # рама и переплёт — у самой плоскости стены, чуть впереди стекла
+    fc = add(corner, mul(out, -(REVEAL - 0.03)))
     fw = min(FRAME_W, w / 4, h / 4)
-    faces.rect(fc, along, (0, 0, fw), "trim", out)
-    faces.rect(add(fc, (0, 0, h - fw)), along, (0, 0, fw), "trim", out)
-    faces.rect(add(fc, (0, 0, fw)), mul(d, fw), (0, 0, h - 2 * fw), "trim", out)
-    faces.rect(add(fc, add(mul(d, w - fw), (0, 0, fw))), mul(d, fw), (0, 0, h - 2 * fw), "trim", out)
+    faces.rect(fc, along, (0, 0, fw), frame_role, out)
+    faces.rect(add(fc, (0, 0, h - fw)), along, (0, 0, fw), frame_role, out)
+    faces.rect(add(fc, (0, 0, fw)), mul(d, fw), (0, 0, h - 2 * fw), frame_role, out)
+    faces.rect(add(fc, add(mul(d, w - fw), (0, 0, fw))), mul(d, fw), (0, 0, h - 2 * fw),
+               frame_role, out)
     if kind != "door":
         if w > 0.7:                                                            # импост
             faces.rect(add(fc, add(mul(d, (w - MULLION_W) / 2), (0, 0, fw))),
-                       mul(d, MULLION_W), (0, 0, h - 2 * fw), "trim", out)
+                       mul(d, MULLION_W), (0, 0, h - 2 * fw), frame_role, out)
         if h > 1.3:                                                            # фрамуга
             tc = add(fc, mul(out, 0.005))
             faces.rect(add(tc, add(mul(d, fw), (0, 0, 0.72 * h))), mul(d, w - 2 * fw),
-                       (0, 0, MULLION_W), "trim", out)
+                       (0, 0, MULLION_W), frame_role, out)
 
-    # наличник на стене
-    if surround > 0:
+    # наличник — рамка на стене вокруг проёма
+    left = right = bottom = top = 0.0
+    if margins:
+        left, right, bottom, top = (max(m, 0.0) for m in margins)
         sc = add(corner, mul(out, SURROUND_OUT))
-        bottom = 0.0 if kind == "door" else -0.0
-        faces.rect(add(sc, add(mul(d, -surround), (0, 0, bottom))), mul(d, surround),
-                   (0, 0, h - bottom), "trim", out)
-        faces.rect(add(sc, add(along, (0, 0, bottom))), mul(d, surround), (0, 0, h - bottom),
-                   "trim", out)
-        faces.rect(add(sc, add(mul(d, -surround), up)), mul(d, w + 2 * surround),
-                   (0, 0, surround), "trim", out)
-        top = add(sc, add(mul(d, -surround), (0, 0, h + surround)))
-        faces.rect(top, mul(d, w + 2 * surround), mul(out, -SURROUND_OUT), "trim", (0, 0, 1))
+        th = mul(out, -SURROUND_OUT)
+        x0, x1, z0, z1 = -left, w + right, -bottom, h + top
+        strips = [(x0, 0.0, z0, z1), (w, x1, z0, z1), (0.0, w, h, z1), (0.0, w, z0, 0.0)]
+        for a, b, za, zb in strips:
+            if b - a > 0.01 and zb - za > 0.01:
+                faces.rect(add(sc, add(mul(d, a), (0, 0, za))), mul(d, b - a), (0, 0, zb - za),
+                           frame_role, out)
+        outer = add(sc, add(mul(d, x0), (0, 0, z0)))
+        faces.rect(add(outer, (0, 0, z1 - z0)), mul(d, x1 - x0), th, frame_role, (0, 0, 1))
+        faces.rect(outer, (0, 0, z1 - z0), th, frame_role, mul(d, -1))
+        faces.rect(add(outer, mul(d, x1 - x0)), (0, 0, z1 - z0), th, frame_role, d)
 
-    # отлив под окном
+    # отлив под окном — тёмный металл
     if kind != "door":
-        sill = add(corner, mul(d, -surround))
-        width = mul(d, w + 2 * surround)
-        faces.rect(sill, width, mul(out, SILL_OUT), "trim", (0, 0, 1))
-        faces.rect(add(sill, add(mul(out, SILL_OUT), (0, 0, -0.06))), width, (0, 0, 0.06),
-                   "trim", out)
+        ext = max(left, right, 0.04)
+        sill = add(corner, add(mul(d, -ext), (0, 0, -bottom)))
+        width = mul(d, w + 2 * ext)
+        faces.rect(sill, width, mul(out, SILL_OUT), "roof", (0, 0, 1))
+        faces.rect(add(sill, add(mul(out, SILL_OUT), (0, 0, -0.05))), width, (0, 0, 0.05),
+                   "roof", out)
+
+
+def relief(faces, item, role="trim"):
+    """Выступающий элемент фасада с чертежа (тяга, лопатка): короб на стене."""
+    axis, sign = SIDES[item["side"]]
+    out = point(axis, 0.0, float(sign), 0.0)
+    d = point(axis, 1.0, 0.0, 0.0)
+    u0, u1, z0, z1 = item["u0"], item["u1"], item["z0"], item["z1"]
+    if u1 - u0 < 0.01 or z1 - z0 < 0.01:
+        return
+    front = item["face"] + sign * item["depth"]
+    a = point(axis, u0, front, z0)
+    faces.rect(a, mul(d, u1 - u0), (0, 0, z1 - z0), role, out)
+    back = mul(out, -item["depth"])
+    faces.rect(add(a, (0, 0, z1 - z0)), mul(d, u1 - u0), back, role, (0, 0, 1))
+    faces.rect(a, mul(d, u1 - u0), back, role, (0, 0, -1))
+    faces.rect(a, (0, 0, z1 - z0), back, role, mul(d, -1))
+    faces.rect(add(a, mul(d, u1 - u0)), (0, 0, z1 - z0), back, role, d)
 
 
 def intervals_without(lo, hi, cuts):
@@ -328,12 +364,18 @@ def pilasters(faces, ring, z0, z1):
 
 
 def soffit(faces, inner, outer, z):
-    """Подшивка свеса: кольцо между габаритом стен и краем кровли, смотрит вниз."""
+    """Свес: тёмная лобовая доска по краю и подшивка снизу между стеной и краем."""
     (ix0, iy0, ix1, iy1), (ox0, oy0, ox1, oy1) = inner, outer
-    i = [(ix0, iy0, z), (ix1, iy0, z), (ix1, iy1, z), (ix0, iy1, z)]
-    o = [(ox0, oy0, z), (ox1, oy0, z), (ox1, oy1, z), (ox0, oy1, z)]
+    zb = z - FASCIA
+    i = [(ix0, iy0, zb), (ix1, iy0, zb), (ix1, iy1, zb), (ix0, iy1, zb)]
+    o = [(ox0, oy0, zb), (ox1, oy0, zb), (ox1, oy1, zb), (ox0, oy1, zb)]
+    center = ((ox0 + ox1) / 2, (oy0 + oy1) / 2, z)
     for k in range(4):
         faces.add([o[k], o[(k + 1) % 4], i[(k + 1) % 4], i[k]], "trim", (0, 0, -1))
+        a, b = o[k], o[(k + 1) % 4]
+        top_a, top_b = (a[0], a[1], z), (b[0], b[1], z)
+        mid = ((a[0] + b[0]) / 2 - center[0], (a[1] + b[1]) / 2 - center[1], 0.0)
+        faces.add([a, b, top_b, top_a], "roof", mid)
 
 
 def hip_roof(faces, ring, z_eave):
@@ -418,7 +460,12 @@ def edge_holes(p, q, part_id, openings, used):
         if not lo - 0.01 <= (o["u0"] + o["u1"]) / 2 <= hi + 0.01:
             continue
         t = sorted(((o["u0"] - p[axis]) * direction, (o["u1"] - p[axis]) * direction))
-        holes.append((max(t[0], 0.0), min(t[1], length), o["z0"], o["z1"], o["type"]))
+        sbox = None
+        if o.get("surround"):
+            su0, su1, sz0, sz1 = o["surround"]
+            ts = sorted(((su0 - p[axis]) * direction, (su1 - p[axis]) * direction))
+            sbox = (ts[0], ts[1], sz0, sz1)
+        holes.append((max(t[0], 0.0), min(t[1], length), o["z0"], o["z1"], o["type"], sbox))
         used.add(i)
     return holes
 
@@ -433,11 +480,11 @@ def prism_walls(faces, part, openings, used, z0, z1, kind, skip_ring=None):
         if skip_ring and on_ring(mid, skip_ring):
             continue                   # стена пристройки, прижатая к основному объёму
         holes = wall(faces, p, q, z0, z1, edge_holes(p, q, part["id"], openings, used), kind)
-        if kind in ("main", "annex"):
+        if kind in ("main", "annex") and not DRAWING_DETAILS:
             if z1 > FLOOR2_Z + 1.0:
                 band(faces, p, q, FLOOR2_Z + BELT[0], FLOOR2_Z + BELT[1], BELT_OUT, holes or [])
             band(faces, p, q, z1 - CORNICE_H, z1, CORNICE_OUT, holes or [])
-    if kind in ("main", "annex"):
+    if kind in ("main", "annex") and not DRAWING_DETAILS:
         pilasters(faces, ring, 0.0, z1 - CORNICE_H)
     return ring
 
@@ -613,7 +660,12 @@ def make_material(name, images):
 
 # ---------- сборка ----------
 
+DRAWING_DETAILS = False   # есть ли в building.json детали фасада с чертежа
+
+
 def build_faces(data):
+    global DRAWING_DETAILS
+    DRAWING_DETAILS = bool(data.get("details"))
     faces = Faces()
     openings = data.get("openings", [])
     used = set()
@@ -633,6 +685,8 @@ def build_faces(data):
         else:
             cap(faces, pring, top, "plinth")
 
+    for item in data.get("details", []):
+        relief(faces, item)
     for o in openings:
         if o["type"] == "door" and o["part"] == main["id"]:
             canopy(faces, o)
