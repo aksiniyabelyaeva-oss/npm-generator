@@ -2,7 +2,8 @@
 
 Где лежат материалы:
 - library/materials/<имя>/          — публичные (в git): рецепты кода, CC0;
-- data/library_private/materials/<имя>/ — из ваших сданных моделей (не в git).
+- data/library_private/materials/<имя>/ — из ваших сданных моделей (не в git);
+- data/cc0_cache/materials/<имя>/       — скачанные с ambientCG (CC0, не в git, см. cc0.py).
 
 В каждой папке material.json:
     name      — имя материала (латиница), по нему его зовут в настройках проекта
@@ -30,19 +31,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import textures  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-ROOTS = [ROOT / "library" / "materials", ROOT / "data" / "library_private" / "materials"]
+ROOTS = {
+    "публичный": ROOT / "library" / "materials",
+    "частный": ROOT / "data" / "library_private" / "materials",
+    "cc0-кэш": ROOT / "data" / "cc0_cache" / "materials",
+}
 
 
 def catalog():
     """Все материалы: имя -> описание (с путём к папке в поле dir)."""
     found = {}
-    for root in ROOTS:
+    for origin, root in ROOTS.items():
         if not root.exists():
             continue
         for meta_path in sorted(root.glob("*/material.json")):
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             meta["dir"] = meta_path.parent
-            meta["private"] = root != ROOTS[0]
+            meta["origin"] = origin
+            meta["private"] = origin != "публичный"
             found[meta["name"]] = meta
     return found
 
@@ -120,5 +126,4 @@ if __name__ == "__main__":
         write_previews()
         print("Превью и library/CATALOG.md обновлены")
     for name, meta in catalog().items():
-        where = "частный" if meta["private"] else "публичный"
-        print(f"{name:40} {meta['kind']:10} {where:10} {meta['title']}")
+        print(f"{name:40} {meta['kind']:10} {meta['origin']:10} {meta['title']}")

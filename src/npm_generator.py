@@ -27,6 +27,7 @@ import bmesh
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # чтобы найти library.py
+import cc0  # noqa: E402
 import library  # noqa: E402
 
 FLOOR2_Z = 3.42        # смена цвета стены между этажами, м
@@ -535,8 +536,12 @@ class Atlas:
             if color:
                 params["color"] = colors.get(color, color) if not color.startswith("#") else color
             custom = overrides.get(role, {})
-            name = custom.get("material", name)
-            params.update(custom.get("params", {}))
+            if custom:
+                try:                      # своё имя, ambientcg:<id> или поиск по словам
+                    name = cc0.resolve(custom, library.catalog())
+                    params = dict(custom.get("params", {}))   # свой материал — свой цвет
+                except Exception as err:
+                    print(f"  «{role}»: не удалось получить {custom} ({err}) — беру {name}")
             try:
                 maps, meta = library.tile(name, self.tile_px, params, read_png_blender)
             except KeyError:

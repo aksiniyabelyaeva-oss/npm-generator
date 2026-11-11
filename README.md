@@ -82,7 +82,7 @@ python src/run_project.py project_01 --no-blender    # без Blender
 | Откуда | Где | В git |
 |---|---|---|
 | Рисует код (`src/textures.py`): доска, фальц, штукатурка, окраска, стекло | `library/materials/` | да |
-| CC0-библиотеки (ambientCG, Poly Haven): кирпич, камень… | `library/materials/` | да |
+| ambientCG (CC0) по запросу (`src/cc0.py`): кирпич, камень, бетон… | `data/cc0_cache/materials/` | нет, скачивается сам |
 | Сданные НПМ бюро (`src/library_from_npm.py`) | `data/library_private/materials/` | нет |
 
 `library_from_npm.py` режет атлас сданной модели на плитки: делит его по линиям, которые не
@@ -94,6 +94,17 @@ python src/run_project.py project_01 --no-blender    # без Blender
 берётся материал кода по умолчанию. Генератор собирает из них атлас и кладёт текстуру в
 реальном масштабе: вдоль полос (доска, фальц) растягивает, поперёк режет грань по размеру плитки.
 Список: `python src/library.py`, каталог публичных — `library/CATALOG.md`.
+
+Материал роли можно задать тремя способами:
+```json
+"wall1":  {"material": "plaster", "params": {"color": "#A38F7A"}}
+"plinth": {"material": "ambientcg:PavingStones131"}
+"wall2":  {"search": "red brick"}
+```
+Для `ambientcg:` и `search` генератор сначала ищет в библиотеке и кэше, и только если там нет —
+идёт в API ambientCG, скачивает архив 1K, переводит в наш формат и кладёт в кэш (один раз).
+Нет интернета — берёт материал кода и пишет об этом. Вручную: `python src/cc0.py search granite`,
+`python src/cc0.py get Bricks104`, `python src/cc0.py import архив.zip`.
 
 ## Похожесть на сданную НПМ
 
