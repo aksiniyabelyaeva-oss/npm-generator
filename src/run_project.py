@@ -8,7 +8,8 @@
 Что где лежит:
 - настройки проекта (файлы, слои, ручные значения) — projects/<имя>.json;
 - данные проекта — папка data_dir из настроек;
-- путь к Blender — переменная окружения BLENDER, иначе стандартный путь Steam.
+- путь к Blender — переменная окружения BLENDER, иначе стандартный путь Steam;
+- готовая НПМ — data/<проект>/output/: FBX, текстуры, validation.txt.
 
 Эталон окон windows_checked.json конвейер только читает и никогда не меняет.
 """
@@ -34,8 +35,10 @@ STEPS = {
     "openings": "проёмы на стенах модели",
     "preview": "предпросмотр в Blender -> preview.blend",
     "compare": "сравнение модели со сданной НПМ",
+    "npm": "генерация НПМ: FBX с текстурами",
+    "validate": "проверка НПМ по требованиям",
 }
-BLENDER_STEPS = {"preview", "compare"}
+BLENDER_STEPS = {"preview", "compare", "npm", "validate"}
 
 
 class StepFailed(Exception):
@@ -48,6 +51,7 @@ def load_config(name):
         raise SystemExit(f"Нет настроек проекта: {path}")
     cfg = json.loads(path.read_text(encoding="utf-8"))
     cfg["data_dir"] = ROOT / cfg["data_dir"]
+    cfg["path"] = path
     return cfg
 
 
@@ -69,8 +73,10 @@ def blender_command():
     if not Path(path).exists():
         return None
     if "python" in Path(path).name.lower():
-        return lambda script, arg: [path, SRC / script, "--", arg]
-    return lambda script, arg: [path, "--background", "--python", SRC / script, "--", arg]
+        return lambda script, *args: [path, SRC / script, "--", *args]
+    # --python-exit-code 1: если скрипт упал, Blender тоже вернёт ошибку
+    return lambda script, *args: [path, "--background", "--python-exit-code", "1",
+                                  "--python", SRC / script, "--", *args]
 
 
 def apply_manual(cfg):
@@ -117,6 +123,11 @@ def do_step(step, cfg, blender):
             run(blender("compare_reference.py", building))
         else:
             print("Сданной модели нет (папка reference) — шаг пропущен")
+    elif step == "npm":
+        run(blender("npm_generator.py", building, cfg["path"]))
+    elif step == "validate":
+        fbx = data_dir / "output" / f"{cfg['npm']['file_name']}.fbx"
+        run(blender("validate_npm.py", fbx, cfg["path"]))
 
 
 def main():
