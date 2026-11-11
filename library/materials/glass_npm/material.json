@@ -1,0 +1,24 @@
+{
+  "name": "glass_npm",
+  "title": "Стекло по требованиям ДГП п. 5.10: белый цвет, металличность белая, шероховатость чёрная",
+  "tags": [
+    "glass",
+    "window",
+    "dgp"
+  ],
+  "kind": "procedural",
+  "recipe": "solid",
+  "params": {
+    "color": "#FFFFFF",
+    "roughness": 0.0,
+    "metallic": 1.0,
+    "noise": 0.0
+  },
+  "size_m": [
+    2,
+    2
+  ],
+  "stretch": "both",
+  "source": "код: src/textures.py; требование — распоряжение ДИТ и ДГП от 18.08.2026 № ДГП-Р-56/26/64-16-473/26, прил. 1, п. 5.10",
+  "license": "как у проекта"
+}

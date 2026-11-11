@@ -41,6 +41,7 @@ STEPS = {
     "npm": "генерация НПМ: FBX с текстурами",
     "validate": "проверка НПМ по требованиям",
     "visual": "похожесть НПМ на сданную: силуэт и цвет",
+    "package": "архив для подачи: префикс_Address.zip",
 }
 BLENDER_STEPS = {"preview", "compare", "library", "npm", "validate", "visual"}
 
@@ -149,6 +150,8 @@ def do_step(step, cfg, blender):
         run(blender("validate_npm.py", fbx, cfg["path"]))
     elif step == "visual":
         run(blender("visual_compare.py", building, cfg["path"]))
+    elif step == "package":
+        python("package_npm.py", cfg["path"])
 
 
 def main():

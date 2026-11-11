@@ -36,7 +36,8 @@
   "npm": {
     "file_name": "0507_SrednijZolotorozhskijPereulok_17_01",
     "object_name": "SrednijZolotorozhskijPereulok_17_001",
-    "max_triangles": 15000
+    "max_triangles": 15000,
+    "apply_transforms": false
   },
   "materials": {
     "wall1": {
@@ -56,9 +57,6 @@
     },
     "annex": {
       "material": "project_01_wall_siding_1"
-    },
-    "glass": {
-      "material": "project_01_trim_3"
     },
     "dormer": {
       "material": "project_01_dark_1"

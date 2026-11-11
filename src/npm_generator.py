@@ -40,7 +40,7 @@ DORMER_RISE = 0.35     # высота конька слухового окна �
 FRAME_W = 0.06         # ширина рамы окна, м
 MULLION_W = 0.05       # ширина импоста и горбылька переплёта, м
 SURROUND_W = 0.12      # ширина наличника, м
-SURROUND_OUT = 0.03    # насколько наличник выступает из стены, м
+SURROUND_OUT = 0.02    # наличник над стеной: 5 мм – 2 см по п. 3.9 распоряжения ДГП, м
 SILL_OUT = 0.08        # вынос подоконного отлива, м
 BELT = (-0.12, 0.13)   # межэтажный пояс: от и до относительно пола 2-го этажа, м
 BELT_OUT = 0.05        # вынос пояса, м
@@ -53,7 +53,8 @@ PILASTER_OUT = 0.04    # вынос лопатки, м
 ANNEX_PITCH = 28       # уклон вальмовой крыши пристройки, градусы
 CANOPY = (1.0, 0.30)   # козырёк над дверью: вынос и запас по ширине с каждой стороны, м
 ATLAS = 2048           # размер текстуры, px
-UV_PAD = 2 / 682       # отступ UV от края плитки, чтобы не подмешивалась соседняя
+PADDING_PX = 8         # отступ UV-островов от края плитки, не меньше 8 px (п. 5.4)
+MAX_PNG_MB = 3.0       # вес одной текстурной карты, не больше 3 МБ (п. 5.3)
 
 SIDES = {"SE": (0, -1), "NW": (0, 1), "SW": (1, -1), "NE": (1, 1)}
 
@@ -67,7 +68,7 @@ ROLE_DEFAULTS = {
     "plinth": ("plaster", "plinth"),
     "roof": ("roof_standing_seam", "roof"),
     "annex": ("wood_siding_horizontal", "#A08F78"),
-    "glass": ("glass_dark", "#B9C0C3"),
+    "glass": ("glass_npm", None),          # белое, металл, гладкое — п. 5.10
     "door": ("paint", "#4A3A30"),
     "dormer": ("paint", "roof"),
 }
@@ -237,7 +238,7 @@ def opening(faces, corner, d, out, w, h, kind, margins=None, dark=False):
     faces.rect(add(corner, inward), along, up, glass_role, out)
 
     # рама и переплёт — у самой плоскости стены, чуть впереди стекла
-    fc = add(corner, mul(out, -(REVEAL - 0.03)))
+    fc = add(corner, mul(out, -(REVEAL - 0.015)))   # 1.5 см перед стеклом (п. 3.9)
     fw = min(FRAME_W, w / 4, h / 4)
     faces.rect(fc, along, (0, 0, fw), frame_role, out)
     faces.rect(add(fc, (0, 0, h - fw)), along, (0, 0, fw), frame_role, out)
@@ -569,6 +570,37 @@ def read_png_blender(path):
     return arr.reshape(h, w, 4)[::-1, :, :3].astype(float)
 
 
+def write_png(path, rgb):
+    """RGB 0…1 -> PNG 8 бит без альфа-канала (п. 5.5), с максимальным сжатием.
+
+    Пишем сами: так сжатие сильнее, чем у Blender, и значения карт
+    (нормали, шероховатость) не меняются цветокоррекцией.
+    """
+    import struct
+    import zlib
+    data = (np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8)
+    h, w = data.shape[:2]
+    rows = data.reshape(h, w * 3).astype(np.int16)
+    up = np.vstack([rows[:1], rows[1:] - rows[:-1]]) % 256          # фильтр Up
+    sub = np.hstack([rows[:, :3], rows[:, 3:] - rows[:, :-3]]) % 256  # фильтр Sub
+    cost_up = np.abs(np.where(up > 127, up - 256, up)).sum(axis=1)
+    cost_sub = np.abs(np.where(sub > 127, sub - 256, sub)).sum(axis=1)
+    raw = bytearray()
+    for i in range(h):
+        if i > 0 and cost_up[i] < cost_sub[i]:
+            raw += b"\x02" + up[i].astype(np.uint8).tobytes()
+        else:
+            raw += b"\x01" + sub[i].astype(np.uint8).tobytes()
+
+    def chunk(tag, payload):
+        return (struct.pack(">I", len(payload)) + tag + payload
+                + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF))
+
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+    Path(path).write_bytes(png)
+
+
 class Atlas:
     """Атлас из материалов библиотеки: плитка на каждую роль поверхности."""
 
@@ -606,8 +638,9 @@ class Atlas:
         i = self.slots[role]
         col, row = i % self.grid, i // self.grid
         size = self.tile_px / ATLAS
-        s = UV_PAD + (1 - 2 * UV_PAD) * min(max(s, 0.0), 1.0)
-        t = UV_PAD + (1 - 2 * UV_PAD) * min(max(t, 0.0), 1.0)
+        pad = PADDING_PX / self.tile_px
+        s = pad + (1 - 2 * pad) * min(max(s, 0.0), 1.0)
+        t = pad + (1 - 2 * pad) * min(max(t, 0.0), 1.0)
         return ((col + s) * size, 1 - (row + 1) * size + t * size)
 
     def save(self, out_dir, base):
@@ -621,14 +654,15 @@ class Atlas:
                 y, x = (i // self.grid) * self.tile_px, (i % self.grid) * self.tile_px
                 canvas[y:y + self.tile_px, x:x + self.tile_px] = maps[key]
             name = f"T_{base}_{key}_1"
-            img = bpy.data.images.new(name, ATLAS, ATLAS, alpha=False)
+            path = out_dir / f"{name}.png"
+            write_png(path, canvas)
+            mb = path.stat().st_size / 2 ** 20
+            if mb > MAX_PNG_MB:
+                print(f"  {path.name}: {mb:.1f} МБ — больше {MAX_PNG_MB} МБ (п. 5.3)")
+            img = bpy.data.images.load(str(path), check_existing=False)
+            img.name = name                       # имя внутри файла = имя PNG (п. 10.3.4)
             if key != "d":
                 img.colorspace_settings.name = "Non-Color"
-            rgba = np.concatenate([canvas[::-1], np.ones((ATLAS, ATLAS, 1))], axis=2)
-            img.pixels.foreach_set(rgba.astype(np.float32).ravel())
-            img.filepath_raw = str(out_dir / f"{name}.png")
-            img.file_format = "PNG"
-            img.save()
             images[key] = img
         return images
 
@@ -819,6 +853,10 @@ def main():
     bpy.context.scene.collection.objects.link(obj)
     ox, oy = data["origin_msk"]
     obj.location = (ox, oy, data["zero_abs"])
+    if names.get("apply_transforms", False):
+        # п. 3.14: трансформации сброшены — вершины сразу в МСК, объект в нуле
+        mesh.transform(obj.matrix_world)
+        obj.location = (0.0, 0.0, 0.0)
 
     fbx_path = out_dir / f"{names['file_name']}.fbx"
     bpy.ops.object.select_all(action="DESELECT")
