@@ -24,6 +24,10 @@ from pathlib import Path
 
 import bpy  # bpy первым: после него становится доступен bmesh
 import bmesh
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # чтобы найти library.py
+import library  # noqa: E402
 
 FLOOR2_Z = 3.42        # смена цвета стены между этажами, м
 ROOF_LOWER_RUN = 0.8   # вынос нижнего ската мансарды внутрь, м
@@ -31,22 +35,39 @@ REVEAL = 0.15          # глубина откоса окна, м
 BURY = 1.0             # насколько стены уходят ниже z_bottom, м
 DORMER_SIDE = 0.10     # стенка слухового окна вокруг рамы, м
 DORMER_RISE = 0.35     # высота конька слухового окна над его стенами, м
+# детали фасада (пока одинаковые для всех домов; дальше — из чертежей)
+FRAME_W = 0.06         # ширина рамы окна, м
+MULLION_W = 0.05       # ширина импоста и горбылька переплёта, м
+SURROUND_W = 0.12      # ширина наличника, м
+SURROUND_OUT = 0.03    # насколько наличник выступает из стены, м
+SILL_OUT = 0.08        # вынос подоконного отлива, м
+BELT = (-0.12, 0.13)   # межэтажный пояс: от и до относительно пола 2-го этажа, м
+BELT_OUT = 0.05        # вынос пояса, м
+CORNICE_H = 0.35       # высота карниза под кровлей, м
+CORNICE_OUT = 0.12     # вынос карниза, м
+OVERHANG = 0.30        # свес кровли, м
+PILASTER_W = 0.35      # ширина угловой лопатки, м
+PILASTER_OUT = 0.04    # вынос лопатки, м
+ANNEX_PITCH = 28       # уклон вальмовой крыши пристройки, градусы
+CANOPY = (1.0, 0.30)   # козырёк над дверью: вынос и запас по ширине с каждой стороны, м
 ATLAS = 2048           # размер текстуры, px
-GRID = 4               # атлас 4×4 плитки
-UV_PAD = 0.12          # отступ UV внутри плитки (доля), чтобы не залезать на соседнюю
+UV_PAD = 2 / 682       # отступ UV от края плитки, чтобы не подмешивалась соседняя
 
 SIDES = {"SE": (0, -1), "NW": (0, 1), "SW": (1, -1), "NE": (1, 1)}
 
-# плитка атласа: (номер, ключ цвета или #RRGGBB, шероховатость, металличность)
-TILES = {
-    "wall1": (0, "wall_floor1", 0.90, 0.0),
-    "wall2": (1, "wall_floor2", 0.90, 0.0),
-    "trim": (2, "trim", 0.85, 0.0),
-    "plinth": (3, "plinth", 0.95, 0.0),
-    "roof": (4, "roof", 0.55, 0.3),
-    "annex": (5, "#8A756B", 0.90, 0.0),
-    "glass": (6, "#2E3A42", 0.10, 0.0),
-    "door": (7, "#4A3A30", 0.70, 0.0),
+# Роли поверхностей и материал по умолчанию: (материал библиотеки, цвет —
+# ключ из colors в building.json или #RRGGBB, None — цвет материала).
+# Проект может заменить любой материал в настройках: "materials": {роль: {...}}.
+ROLE_DEFAULTS = {
+    "wall1": ("plaster", "wall_floor1"),
+    "wall2": ("plaster", "wall_floor2"),
+    "trim": ("paint", "trim"),
+    "plinth": ("plaster", "plinth"),
+    "roof": ("roof_standing_seam", "roof"),
+    "annex": ("wood_siding_horizontal", "#A08F78"),
+    "glass": ("glass_dark", None),
+    "door": ("paint", "#4A3A30"),
+    "dormer": ("paint", "roof"),
 }
 
 
@@ -127,7 +148,7 @@ def signed_area_3d(pts):
 
 def wall_tile(z_mid, kind):
     if kind == "dormer":
-        return "trim"
+        return "dormer"
     if z_mid < 0 or kind == "porch":
         return "plinth"
     if kind == "annex":
@@ -185,19 +206,174 @@ def wall(faces, p, q, z0, z1, holes, kind):
                        wall_tile(zm, kind), out)
 
     for t0, t1, h0, h1, kind_hole in holes:
-        opening(faces, at(t0, h0), d, out, t1 - t0, h1 - h0, kind_hole)
+        opening(faces, at(t0, h0), d, out, t1 - t0, h1 - h0, kind_hole,
+                surround=SURROUND_W if kind != "dormer" else 0.06)
+    return holes
 
 
-def opening(faces, corner, d, out, w, h, kind):
-    """Откосы и стекло (или полотно двери) в глубине проёма."""
+def opening(faces, corner, d, out, w, h, kind, surround=SURROUND_W):
+    """Проём: откосы, стекло (или полотно двери) в глубине, рама с переплётом,
+    наличник вокруг и отлив под окном."""
     inward = mul(out, -REVEAL)
     up = (0.0, 0.0, h)
     along = mul(d, w)
-    faces.rect(corner, along, inward, "trim", (0, 0, 1))                      # подоконник
-    faces.rect(add(corner, up), along, inward, "trim", (0, 0, -1))           # верх
+    faces.rect(corner, along, inward, "trim", (0, 0, 1))                      # низ откоса
+    faces.rect(add(corner, up), along, inward, "trim", (0, 0, -1))           # верх откоса
     faces.rect(corner, up, inward, "trim", d)                                 # левый откос
     faces.rect(add(corner, along), up, inward, "trim", mul(d, -1))           # правый откос
     faces.rect(add(corner, inward), along, up, "door" if kind == "door" else "glass", out)
+
+    # рама и переплёт — чуть впереди стекла
+    fc = add(corner, mul(out, -(REVEAL - 0.04)))
+    fw = min(FRAME_W, w / 4, h / 4)
+    faces.rect(fc, along, (0, 0, fw), "trim", out)
+    faces.rect(add(fc, (0, 0, h - fw)), along, (0, 0, fw), "trim", out)
+    faces.rect(add(fc, (0, 0, fw)), mul(d, fw), (0, 0, h - 2 * fw), "trim", out)
+    faces.rect(add(fc, add(mul(d, w - fw), (0, 0, fw))), mul(d, fw), (0, 0, h - 2 * fw), "trim", out)
+    if kind != "door":
+        if w > 0.7:                                                            # импост
+            faces.rect(add(fc, add(mul(d, (w - MULLION_W) / 2), (0, 0, fw))),
+                       mul(d, MULLION_W), (0, 0, h - 2 * fw), "trim", out)
+        if h > 1.3:                                                            # фрамуга
+            tc = add(fc, mul(out, 0.005))
+            faces.rect(add(tc, add(mul(d, fw), (0, 0, 0.72 * h))), mul(d, w - 2 * fw),
+                       (0, 0, MULLION_W), "trim", out)
+
+    # наличник на стене
+    if surround > 0:
+        sc = add(corner, mul(out, SURROUND_OUT))
+        bottom = 0.0 if kind == "door" else -0.0
+        faces.rect(add(sc, add(mul(d, -surround), (0, 0, bottom))), mul(d, surround),
+                   (0, 0, h - bottom), "trim", out)
+        faces.rect(add(sc, add(along, (0, 0, bottom))), mul(d, surround), (0, 0, h - bottom),
+                   "trim", out)
+        faces.rect(add(sc, add(mul(d, -surround), up)), mul(d, w + 2 * surround),
+                   (0, 0, surround), "trim", out)
+        top = add(sc, add(mul(d, -surround), (0, 0, h + surround)))
+        faces.rect(top, mul(d, w + 2 * surround), mul(out, -SURROUND_OUT), "trim", (0, 0, 1))
+
+    # отлив под окном
+    if kind != "door":
+        sill = add(corner, mul(d, -surround))
+        width = mul(d, w + 2 * surround)
+        faces.rect(sill, width, mul(out, SILL_OUT), "trim", (0, 0, 1))
+        faces.rect(add(sill, add(mul(out, SILL_OUT), (0, 0, -0.06))), width, (0, 0, 0.06),
+                   "trim", out)
+
+
+def intervals_without(lo, hi, cuts):
+    """Отрезок [lo, hi] без кусков cuts (список (a, b))."""
+    parts = [(lo, hi)]
+    for a, b in cuts:
+        nxt = []
+        for x0, x1 in parts:
+            if b <= x0 or a >= x1:
+                nxt.append((x0, x1))
+                continue
+            if a > x0:
+                nxt.append((x0, a))
+            if b < x1:
+                nxt.append((b, x1))
+        parts = nxt
+    return [(a, b) for a, b in parts if b - a > 0.02]
+
+
+def band(faces, p, q, za, zb, depth, holes, tile="trim", extend=True):
+    """Горизонтальная тяга вдоль стены p→q (пояс, карниз): лицо, верх, низ, торцы.
+
+    Там, где тягу пересекает проём, она прерывается.
+    """
+    edge = (q[0] - p[0], q[1] - p[1], 0.0)
+    length = math.hypot(edge[0], edge[1])
+    if length < 0.3:
+        return
+    d = mul(edge, 1 / length)
+    out = (d[1], -d[0], 0.0)
+    ext = depth if extend else 0.0
+    cuts = [(h[0] - SURROUND_W, h[1] + SURROUND_W) for h in holes
+            if h[2] < zb + SURROUND_W and h[3] + SURROUND_W > za]
+    for a, b in intervals_without(-ext, length + ext, cuts):
+        corner = add((p[0], p[1], za), mul(d, a))
+        run = mul(d, b - a)
+        front = add(corner, mul(out, depth))
+        faces.rect(front, run, (0, 0, zb - za), tile, out)
+        faces.rect(add(corner, (0, 0, zb)), run, mul(out, depth), tile, (0, 0, 1))
+        faces.rect(corner, run, mul(out, depth), tile, (0, 0, -1))
+        for end, facing in ((corner, mul(d, -1)), (add(corner, run), d)):
+            faces.rect(end, mul(out, depth), (0, 0, zb - za), tile, facing)
+
+
+def pilasters(faces, ring, z0, z1):
+    """Угловые лопатки на выпуклых углах контура (где обе стены длиннее 1.5 м)."""
+    n = len(ring)
+    for i in range(n):
+        a, b, c = ring[i - 1], ring[i], ring[(i + 1) % n]
+        e1 = (b[0] - a[0], b[1] - a[1])
+        e2 = (c[0] - b[0], c[1] - b[1])
+        if e1[0] * e2[1] - e1[1] * e2[0] <= 0:      # вогнутый угол
+            continue
+        l1, l2 = math.hypot(*e1), math.hypot(*e2)
+        if l1 < 1.5 or l2 < 1.5:
+            continue
+        for start, edge, length, at_end in ((a, e1, l1, True), (b, e2, l2, False)):
+            d = (edge[0] / length, edge[1] / length, 0.0)
+            out = (d[1], -d[0], 0.0)
+            t = length - PILASTER_W if at_end else 0.0
+            base = add((start[0], start[1], z0), add(mul(d, t), mul(out, PILASTER_OUT)))
+            faces.rect(base, mul(d, PILASTER_W), (0, 0, z1 - z0), "trim", out)
+            side = add(base, mul(d, 0 if at_end else PILASTER_W))
+            faces.rect(side, mul(out, -PILASTER_OUT), (0, 0, z1 - z0), "trim",
+                       mul(d, -1) if at_end else d)
+
+
+def soffit(faces, inner, outer, z):
+    """Подшивка свеса: кольцо между габаритом стен и краем кровли, смотрит вниз."""
+    (ix0, iy0, ix1, iy1), (ox0, oy0, ox1, oy1) = inner, outer
+    i = [(ix0, iy0, z), (ix1, iy0, z), (ix1, iy1, z), (ix0, iy1, z)]
+    o = [(ox0, oy0, z), (ox1, oy0, z), (ox1, oy1, z), (ox0, oy1, z)]
+    for k in range(4):
+        faces.add([o[k], o[(k + 1) % 4], i[(k + 1) % 4], i[k]], "trim", (0, 0, -1))
+
+
+def hip_roof(faces, ring, z_eave):
+    """Вальмовая крыша по габариту контура (для пристроек), со свесом."""
+    xs = [p[0] for p in ring]
+    ys = [p[1] for p in ring]
+    inner = (min(xs), min(ys), max(xs), max(ys))
+    x0, y0, x1, y1 = inner[0] - OVERHANG, inner[1] - OVERHANG, inner[2] + OVERHANG, inner[3] + OVERHANG
+    soffit(faces, inner, (x0, y0, x1, y1), z_eave)
+    rise = math.tan(math.radians(ANNEX_PITCH))
+    center = ((x0 + x1) / 2, (y0 + y1) / 2, z_eave)
+    if x1 - x0 >= y1 - y0:
+        half = (y1 - y0) / 2
+        r0, r1 = (x0 + half, center[1], z_eave + half * rise), (x1 - half, center[1], z_eave + half * rise)
+    else:
+        half = (x1 - x0) / 2
+        r0, r1 = (center[0], y0 + half, z_eave + half * rise), (center[0], y1 - half, z_eave + half * rise)
+    e = [(x0, y0, z_eave), (x1, y0, z_eave), (x1, y1, z_eave), (x0, y1, z_eave)]
+    if x1 - x0 >= y1 - y0:
+        polys = ([e[0], e[1], r1, r0], [e[2], e[3], r0, r1], [e[3], e[0], r0], [e[1], e[2], r1])
+    else:
+        polys = ([e[1], e[2], r1, r0], [e[3], e[0], r0, r1], [e[0], e[1], r0], [e[2], e[3], r1])
+    for poly in polys:
+        c = mul(tuple(map(sum, zip(*poly))), 1 / len(poly))
+        faces.add(poly, "roof", sub(c, center))
+
+
+def canopy(faces, o):
+    """Козырёк над дверью: наклонная плита с выносом CANOPY."""
+    axis, sign = SIDES[o["side"]]
+    depth, extra = CANOPY
+    ua, ub = o["u0"] - extra, o["u1"] + extra
+    z_wall, z_front = o["z1"] + SURROUND_W + 0.25, o["z1"] + SURROUND_W + 0.05
+    wall_a, wall_b = point(axis, ua, o["face"], z_wall), point(axis, ub, o["face"], z_wall)
+    front_a = point(axis, ua, o["face"] + sign * depth, z_front)
+    front_b = point(axis, ub, o["face"] + sign * depth, z_front)
+    out = point(axis, 0.0, float(sign), 0.0)
+    faces.add([wall_a, wall_b, front_b, front_a], "roof", add(out, (0, 0, 3)))
+    low = [add(v, (0, 0, -0.06)) for v in (wall_a, wall_b, front_b, front_a)]
+    faces.add(low, "trim", (0, 0, -1))
+    faces.add([front_a, front_b, low[2], low[3]], "trim", out)
 
 
 def cap(faces, ring, z, tile, up=True):
@@ -247,6 +423,7 @@ def edge_holes(p, q, part_id, openings, used):
 
 
 def prism_walls(faces, part, openings, used, z0, z1, kind, skip_ring=None):
+    """Стены части по контуру с проёмами; у дома и пристроек — пояс, карниз, лопатки."""
     ring = [tuple(p) for p in part["outline"]]
     if signed_area(ring) < 0:
         ring = ring[::-1]
@@ -254,7 +431,13 @@ def prism_walls(faces, part, openings, used, z0, z1, kind, skip_ring=None):
         mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
         if skip_ring and on_ring(mid, skip_ring):
             continue                   # стена пристройки, прижатая к основному объёму
-        wall(faces, p, q, z0, z1, edge_holes(p, q, part["id"], openings, used), kind)
+        holes = wall(faces, p, q, z0, z1, edge_holes(p, q, part["id"], openings, used), kind)
+        if kind in ("main", "annex"):
+            if z1 > FLOOR2_Z + 1.0:
+                band(faces, p, q, FLOOR2_Z + BELT[0], FLOOR2_Z + BELT[1], BELT_OUT, holes or [])
+            band(faces, p, q, z1 - CORNICE_H, z1, CORNICE_OUT, holes or [])
+    if kind in ("main", "annex"):
+        pilasters(faces, ring, 0.0, z1 - CORNICE_H)
     return ring
 
 
@@ -262,8 +445,11 @@ def mansard_roof(faces, outline, roof, z_eave):
     """Мансардная вальмовая крыша по габаритному прямоугольнику контура."""
     xs = [p[0] for p in outline]
     ys = [p[1] for p in outline]
-    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-    r = ROOF_LOWER_RUN
+    planes = {"SE": min(ys), "NW": max(ys), "SW": min(xs), "NE": max(xs)}
+    inner = (min(xs), min(ys), max(xs), max(ys))
+    x0, x1, y0, y1 = min(xs) - OVERHANG, max(xs) + OVERHANG, min(ys) - OVERHANG, max(ys) + OVERHANG
+    soffit(faces, inner, (x0, y0, x1, y1), z_eave)
+    r = ROOF_LOWER_RUN + OVERHANG
     bx0, bx1, by0, by1 = x0 + r, x1 - r, y0 + r, y1 - r
     half = (by1 - by0) / 2
     cy = (by0 + by1) / 2
@@ -283,7 +469,7 @@ def mansard_roof(faces, outline, roof, z_eave):
         faces.add(quad, "roof", away(quad))
     for poly in ([b[0], b[1], r1, r0], [b[2], b[3], r0, r1], [b[3], b[0], r0], [b[1], b[2], r1]):
         faces.add(poly, "roof", away(poly))
-    return {"planes": {"SE": y0, "NW": y1, "SW": x0, "NE": x1}}
+    return {"planes": planes}
 
 
 def dormer(faces, o, plane, z_eave, z_break):
@@ -311,71 +497,88 @@ def dormer(faces, o, plane, z_eave, z_break):
     # бока
     for u, facing in ((ua, mul(d, -1)), (ub, d)):
         a = point(axis, u, front, zb)
-        faces.rect(a, sub(point(axis, u, back, zb), a), (0, 0, zt - zb), "trim", facing)
+        faces.rect(a, sub(point(axis, u, back, zb), a), (0, 0, zt - zb), "dormer", facing)
 
     # двускатная крыша и фронтон
     um = (ua + ub) / 2
     zr = zt + DORMER_RISE
     fl, fr, fm = point(axis, ua, front, zt), point(axis, ub, front, zt), point(axis, um, front, zr)
     bl, br, bm = point(axis, ua, back, zt), point(axis, ub, back, zt), point(axis, um, back, zr)
-    faces.add([fl, fr, fm], "trim", out)
+    faces.add([fl, fr, fm], "dormer", out)
     faces.add([fl, fm, bm, bl], "roof", add(mul(d, -1), (0, 0, 1)))
     faces.add([fm, fr, br, bm], "roof", add(d, (0, 0, 1)))
 
 
 # ---------- атлас и материал ----------
 
-def hex_rgb(value):
-    h = value.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+def read_png_blender(path):
+    """PNG -> массив 0…1 (строки сверху вниз) средствами Blender."""
+    img = bpy.data.images.load(str(path), check_existing=False)
+    w, h = img.size
+    arr = np.empty(w * h * 4, dtype=np.float32)
+    img.pixels.foreach_get(arr)
+    bpy.data.images.remove(img)
+    return arr.reshape(h, w, 4)[::-1, :, :3].astype(float)
 
 
-def tile_uv(tile, s, t):
-    """Координаты (s, t) от 0 до 1 внутри плитки -> UV атласа."""
-    index = TILES[tile][0]
-    col, row = index % GRID, index // GRID
-    size = 1 / GRID
-    s = UV_PAD + (1 - 2 * UV_PAD) * s
-    t = UV_PAD + (1 - 2 * UV_PAD) * t
-    return ((col + s) * size, 1 - (row + 1) * size + t * size)
+class Atlas:
+    """Атлас из материалов библиотеки: плитка на каждую роль поверхности."""
 
+    def __init__(self, roles, colors, overrides):
+        self.roles = roles
+        self.grid = math.ceil(math.sqrt(len(roles)))
+        self.tile_px = ATLAS // self.grid
+        self.slots, self.meta, self.tiles, self.used = {}, {}, {}, {}
+        for i, role in enumerate(roles):
+            name, color = ROLE_DEFAULTS[role]
+            params = {}
+            if color:
+                params["color"] = colors.get(color, color) if not color.startswith("#") else color
+            custom = overrides.get(role, {})
+            name = custom.get("material", name)
+            params.update(custom.get("params", {}))
+            try:
+                maps, meta = library.tile(name, self.tile_px, params, read_png_blender)
+            except KeyError:
+                fallback = ROLE_DEFAULTS[role][0]
+                print(f"  материала {name} нет в библиотеке — для «{role}» беру {fallback}")
+                maps, meta = library.tile(fallback, self.tile_px, params, read_png_blender)
+                name = fallback
+            self.slots[role] = i
+            self.meta[role] = meta
+            self.tiles[role] = maps
+            self.used[role] = name
 
-def make_textures(colors, out_dir, base):
-    """Четыре карты атласа: d (цвет), n (нормали), r (шероховатость), m (металличность)."""
-    tile_px = ATLAS // GRID
-    maps = {"d": [], "n": [], "r": [], "m": []}
-    rows = [[None] * GRID for _ in range(GRID)]
-    for name, (index, color, rough, metal) in TILES.items():
-        rgb = hex_rgb(color if color.startswith("#") else colors[color])
-        rows[index // GRID][index % GRID] = (rgb, rough, metal)
-    images = {}
-    for key in maps:
-        pixels = []
-        for y in range(ATLAS):                       # Blender хранит строки снизу вверх
-            row = rows[GRID - 1 - y // tile_px]
-            line = []
-            for col in range(GRID):
-                cell = row[col]
-                if cell is None:
-                    value = {"d": (0.5, 0.5, 0.5), "n": (0.5, 0.5, 1.0),
-                             "r": (0.9,) * 3, "m": (0.0,) * 3}[key]
-                else:
-                    rgb, rough, metal = cell
-                    value = {"d": rgb, "n": (0.5, 0.5, 1.0),
-                             "r": (rough,) * 3, "m": (metal,) * 3}[key]
-                line.extend((*value, 1.0) * tile_px)
-            pixels.extend(line)
-        name = f"T_{base}_{key}_1"
-        img = bpy.data.images.new(name, ATLAS, ATLAS, alpha=False)
-        if key != "d":
-            img.colorspace_settings.name = "Non-Color"
-        img.pixels.foreach_set(pixels)
-        path = out_dir / f"{name}.png"
-        img.filepath_raw = str(path)
-        img.file_format = "PNG"
-        img.save()
-        images[key] = img
-    return images
+    def uv(self, role, s, t):
+        """(s, t) от 0 до 1 внутри плитки роли -> UV атласа."""
+        i = self.slots[role]
+        col, row = i % self.grid, i // self.grid
+        size = self.tile_px / ATLAS
+        s = UV_PAD + (1 - 2 * UV_PAD) * min(max(s, 0.0), 1.0)
+        t = UV_PAD + (1 - 2 * UV_PAD) * min(max(t, 0.0), 1.0)
+        return ((col + s) * size, 1 - (row + 1) * size + t * size)
+
+    def save(self, out_dir, base):
+        """Четыре карты атласа в PNG и в картинки Blender для материала."""
+        images = {}
+        for key in "dnrm":
+            canvas = np.zeros((ATLAS, ATLAS, 3))
+            canvas[...] = {"d": 0.5, "n": (0.5, 0.5, 1.0), "r": 0.9, "m": 0.0}[key]
+            for role, maps in self.tiles.items():
+                i = self.slots[role]
+                y, x = (i // self.grid) * self.tile_px, (i % self.grid) * self.tile_px
+                canvas[y:y + self.tile_px, x:x + self.tile_px] = maps[key]
+            name = f"T_{base}_{key}_1"
+            img = bpy.data.images.new(name, ATLAS, ATLAS, alpha=False)
+            if key != "d":
+                img.colorspace_settings.name = "Non-Color"
+            rgba = np.concatenate([canvas[::-1], np.ones((ATLAS, ATLAS, 1))], axis=2)
+            img.pixels.foreach_set(rgba.astype(np.float32).ravel())
+            img.filepath_raw = str(out_dir / f"{name}.png")
+            img.file_format = "PNG"
+            img.save()
+            images[key] = img
+        return images
 
 
 def make_material(name, images):
@@ -420,8 +623,14 @@ def build_faces(data):
         kind = "annex" if part.get("kind") == "annex" else "porch"
         pring = prism_walls(faces, part, openings, used, part["z_bottom"] - BURY, top,
                             kind, skip_ring=ring)
-        cap(faces, pring, top, "roof" if kind == "annex" else "plinth")
+        if kind == "annex":
+            hip_roof(faces, pring, top)
+        else:
+            cap(faces, pring, top, "plinth")
 
+    for o in openings:
+        if o["type"] == "door" and o["part"] == main["id"]:
+            canopy(faces, o)
     for i, o in enumerate(openings):
         if o["type"] == "dormer":
             dormer(faces, o, roof["planes"][o["side"]], main["z_eave"], main["roof"]["z_break"])
@@ -429,8 +638,56 @@ def build_faces(data):
     return faces, len(openings) - len(used)
 
 
-def to_mesh(faces, name, rotation_deg):
-    """Грани -> меш Blender: общие вершины, UV по плиткам, треугольники."""
+def clip(pts, axis_vec, lo, hi):
+    """Часть многоугольника, где проекция на axis_vec лежит в [lo, hi]."""
+    for bound, keep_above in ((lo, True), (hi, False)):
+        out = []
+        for p, q in zip(pts, pts[1:] + pts[:1]):
+            dp, dq = dot(p, axis_vec) - bound, dot(q, axis_vec) - bound
+            inside_p = dp >= -1e-9 if keep_above else dp <= 1e-9
+            inside_q = dq >= -1e-9 if keep_above else dq <= 1e-9
+            if inside_p:
+                out.append(p)
+            if inside_p != inside_q:
+                t = dp / (dp - dq)
+                out.append(add(p, mul(sub(q, p), t)))
+        pts = out
+        if len(pts) < 3:
+            return []
+    return pts
+
+
+def chunks(pts, axis_vec, period, split):
+    """Режет грань по линиям, кратным period (если split), чтобы каждый кусок
+    помещался в одну плитку текстуры в реальном масштабе."""
+    values = [dot(p, axis_vec) for p in pts]
+    lo, hi = min(values), max(values)
+    if not split or hi - lo <= period + 1e-6:
+        k = math.floor(lo / period + 1e-6)
+        return [(pts, k)]
+    pieces = []
+    k = math.floor(lo / period + 1e-6)
+    while k * period < hi - 1e-6:
+        part = clip(pts, axis_vec, k * period, (k + 1) * period)
+        if part and abs(signed_area_3d(part)) > 1e-6:
+            pieces.append((part, k))
+        k += 1
+    return pieces
+
+
+def face_axes(n):
+    """Оси текстуры на грани: u — по горизонтали, v — вверх по грани."""
+    u_axis = norm(cross((0, 0, 1), n)) if abs(n[2]) < 0.9 else (1.0, 0.0, 0.0)
+    return u_axis, cross(n, u_axis)
+
+
+def to_mesh(faces, name, rotation_deg, atlas):
+    """Грани -> меш Blender: общие вершины, UV в реальном масштабе, треугольники.
+
+    Текстура кладётся в реальном размере (size_m материала). Вдоль направления,
+    где узор однороден (stretch), грань растягивается на всю плитку; поперёк —
+    режется на куски по размеру плитки, чтобы рисунок не растягивался.
+    """
     a = math.radians(rotation_deg)
     c, s = math.cos(a), math.sin(a)
     bm = bmesh.new()
@@ -444,19 +701,30 @@ def to_mesh(faces, name, rotation_deg):
             verts[key] = bm.verts.new((x * c - y * s, x * s + y * c, z))
         return verts[key]
 
-    for pts, tile in faces.items:
-        try:
-            face = bm.faces.new([vert(p) for p in pts])
-        except ValueError:
-            continue                                    # такая грань уже есть
+    for pts, role in faces.items:
+        meta = atlas.meta[role]
+        size_u, size_v = meta["size_m"]
+        stretch = meta.get("stretch", "both")
         n = newell(pts)
-        u_axis = norm(cross((0, 0, 1), n)) if abs(n[2]) < 0.9 else (1.0, 0.0, 0.0)
-        v_axis = cross(n, u_axis)
-        us = [dot(p, u_axis) for p in pts]
-        vs = [dot(p, v_axis) for p in pts]
-        du, dv = (max(us) - min(us)) or 1, (max(vs) - min(vs)) or 1
-        for loop, uu, vv in zip(face.loops, us, vs):
-            loop[uv_layer].uv = tile_uv(tile, (uu - min(us)) / du, (vv - min(vs)) / dv)
+        u_axis, v_axis = face_axes(n)
+        for piece_u, ku in chunks(pts, u_axis, size_u, stretch not in ("u", "both")):
+            for piece, kv in chunks(piece_u, v_axis, size_v, stretch not in ("v", "both")):
+                try:
+                    face = bm.faces.new([vert(p) for p in piece])
+                except ValueError:
+                    continue                            # такая грань уже есть
+                us = [dot(p, u_axis) for p in piece]
+                vs = [dot(p, v_axis) for p in piece]
+                for loop, uu, vv in zip(face.loops, us, vs):
+                    if stretch in ("u", "both"):
+                        su = (uu - min(us)) / ((max(us) - min(us)) or 1)
+                    else:
+                        su = (uu - ku * size_u) / size_u
+                    if stretch in ("v", "both"):
+                        sv = (vv - min(vs)) / ((max(vs) - min(vs)) or 1)
+                    else:
+                        sv = (vv - kv * size_v) / size_v
+                    loop[uv_layer].uv = atlas.uv(role, su, sv)
     bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method="BEAUTY", ngon_method="BEAUTY")
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
@@ -480,8 +748,12 @@ def main():
     bpy.context.scene.unit_settings.scale_length = 1.0
 
     faces, skipped = build_faces(data)
-    mesh = to_mesh(faces, f"SM_{base}_Main", data["rotation_deg"])
-    images = make_textures(data["parts"][0]["colors"], tex_dir, f"{base}_Main")
+    roles = sorted({role for _, role in faces.items}, key=list(ROLE_DEFAULTS).index)
+    atlas = Atlas(roles, data["parts"][0]["colors"], cfg.get("materials", {}))
+    for role in roles:
+        print(f"  {role:7} <- {atlas.used[role]}")
+    mesh = to_mesh(faces, f"SM_{base}_Main", data["rotation_deg"], atlas)
+    images = atlas.save(tex_dir, f"{base}_Main")
     mesh.materials.append(make_material(f"M_{base}_Main_1", images))
 
     obj = bpy.data.objects.new(f"SM_{base}_Main", mesh)

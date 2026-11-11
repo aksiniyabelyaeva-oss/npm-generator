@@ -37,5 +37,31 @@
     "file_name": "0507_SrednijZolotorozhskijPereulok_17_01",
     "object_name": "SrednijZolotorozhskijPereulok_17_001",
     "max_triangles": 15000
+  },
+  "materials": {
+    "wall1": {
+      "material": "project_01_wall_2"
+    },
+    "wall2": {
+      "material": "project_01_wall_siding_2"
+    },
+    "trim": {
+      "material": "project_01_trim_4"
+    },
+    "plinth": {
+      "material": "project_01_plinth_2"
+    },
+    "roof": {
+      "material": "project_01_roof_seam_1"
+    },
+    "annex": {
+      "material": "project_01_wall_siding_1"
+    },
+    "glass": {
+      "material": "project_01_dark_2"
+    },
+    "dormer": {
+      "material": "project_01_dark_1"
+    }
   }
 }

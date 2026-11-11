@@ -1,0 +1,22 @@
+{
+  "name": "wood_siding_horizontal",
+  "title": "Доска горизонтальная (обшивка), шаг 0.15 м",
+  "tags": [
+    "wall",
+    "wood",
+    "siding"
+  ],
+  "kind": "procedural",
+  "recipe": "wood_siding",
+  "params": {
+    "color": "#D1AB6E",
+    "board_m": 0.15
+  },
+  "size_m": [
+    4,
+    4
+  ],
+  "stretch": "u",
+  "source": "код: src/textures.py",
+  "license": "как у проекта"
+}

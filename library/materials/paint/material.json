@@ -1,0 +1,22 @@
+{
+  "name": "paint",
+  "title": "Окраска ровная (отделка, карнизы, рамы, двери)",
+  "tags": [
+    "trim",
+    "paint",
+    "solid"
+  ],
+  "kind": "procedural",
+  "recipe": "solid",
+  "params": {
+    "color": "#F2EDE0",
+    "roughness": 0.85
+  },
+  "size_m": [
+    2,
+    2
+  ],
+  "stretch": "both",
+  "source": "код: src/textures.py",
+  "license": "как у проекта"
+}

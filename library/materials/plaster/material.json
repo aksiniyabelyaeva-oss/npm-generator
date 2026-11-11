@@ -1,0 +1,21 @@
+{
+  "name": "plaster",
+  "title": "Штукатурка с лёгкой фактурой",
+  "tags": [
+    "wall",
+    "plaster",
+    "plinth"
+  ],
+  "kind": "procedural",
+  "recipe": "plaster",
+  "params": {
+    "color": "#A38F7A"
+  },
+  "size_m": [
+    4,
+    4
+  ],
+  "stretch": "both",
+  "source": "код: src/textures.py",
+  "license": "как у проекта"
+}

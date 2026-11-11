@@ -1,0 +1,20 @@
+{
+  "name": "glass_dark",
+  "title": "Стекло тёмное с отблеском неба",
+  "tags": [
+    "glass",
+    "window"
+  ],
+  "kind": "procedural",
+  "recipe": "glass",
+  "params": {
+    "color": "#2E3A42"
+  },
+  "size_m": [
+    2,
+    2
+  ],
+  "stretch": "both",
+  "source": "код: src/textures.py",
+  "license": "как у проекта"
+}

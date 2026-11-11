@@ -35,10 +35,12 @@ STEPS = {
     "openings": "проёмы на стенах модели",
     "preview": "предпросмотр в Blender -> preview.blend",
     "compare": "сравнение модели со сданной НПМ",
+    "library": "материалы из сданной НПМ в частную библиотеку",
     "npm": "генерация НПМ: FBX с текстурами",
     "validate": "проверка НПМ по требованиям",
+    "visual": "похожесть НПМ на сданную: силуэт и цвет",
 }
-BLENDER_STEPS = {"preview", "compare", "npm", "validate"}
+BLENDER_STEPS = {"preview", "compare", "library", "npm", "validate", "visual"}
 
 
 class StepFailed(Exception):
@@ -123,11 +125,24 @@ def do_step(step, cfg, blender):
             run(blender("compare_reference.py", building))
         else:
             print("Сданной модели нет (папка reference) — шаг пропущен")
+    elif step == "library":
+        refs = sorted((data_dir / "reference").glob("*.fbx"))
+        prefix = cfg["name"]
+        done = list((ROOT / "data" / "library_private" / "materials").glob(f"{prefix}_*"))
+        if not refs:
+            print("Сданной модели нет — нарезать нечего")
+        elif done:
+            print(f"Уже в библиотеке: {len(done)} материалов {prefix}_* — шаг пропущен "
+                  f"(чтобы нарезать заново, удали их из data/library_private/materials)")
+        else:
+            run(blender("library_from_npm.py", refs[0], prefix, cfg["manual"]["zero_abs"]))
     elif step == "npm":
         run(blender("npm_generator.py", building, cfg["path"]))
     elif step == "validate":
         fbx = data_dir / "output" / f"{cfg['npm']['file_name']}.fbx"
         run(blender("validate_npm.py", fbx, cfg["path"]))
+    elif step == "visual":
+        run(blender("visual_compare.py", building, cfg["path"]))
 
 
 def main():

@@ -1,0 +1,22 @@
+{
+  "name": "roof_standing_seam",
+  "title": "Фальцевая кровля, шаг фальца 0.5 м",
+  "tags": [
+    "roof",
+    "metal",
+    "seam"
+  ],
+  "kind": "procedural",
+  "recipe": "standing_seam",
+  "params": {
+    "color": "#454A4F",
+    "seam_m": 0.5
+  },
+  "size_m": [
+    4,
+    4
+  ],
+  "stretch": "v",
+  "source": "код: src/textures.py",
+  "license": "как у проекта"
+}
